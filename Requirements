@@ -1,0 +1,185 @@
+GAN Augmentation for Class-Imbalanced Fraud Detection
+Adebola Veralyne Fijabi (1298724) · Tolu Omoniyi (1340808)
+COMP 5112 Research Methodology — Lakehead University, Fall 2026
+A controlled comparison of augmentation strategies for class-imbalanced
+classification. A Generator and Discriminator are implemented from scratch in
+PyTorch (WGAN-GP with gradient penalty and gumbel-softmax for categorical
+columns), and compared against SMOTE, its variants, and the published CTGAN
+reference.
+---
+The research question
+Does synthetic minority data from a GAN improve fraud detection more than
+SMOTE, and is any improvement larger than the run-to-run noise?
+The experimental design
+One variable changes. Everything else is held fixed.
+condition	what is added to the training split	classifier
+`none`	nothing	random forest
+`smote`	SMOTE / SMOTENC interpolated rows	random forest
+`borderline_smote`	borderline-region interpolations	random forest
+`adasyn`	density-adaptive interpolations	random forest
+`tabular_gan`	rows sampled from our WGAN-GP	random forest
+`ctgan`	rows sampled from published CTGAN	random forest
+The GAN is not a classifier and is never compared against one. It
+manufactures training rows. The random forest is the measuring instrument,
+held constant so that any difference in the score is attributable to the
+augmentation and nothing else.
+The same stratified 70/15/15 split, the same selected features, the same
+preprocessing fitted on train only, and the same threshold rule apply to every
+condition. Augmentation happens after the split and touches the training
+split only, so no synthetic row can ever reach validation or test.
+---
+Running the demo application
+The app works with any CSV that has a binary label column. It is not tied
+to PaySim or IEEE-CIS.
+Option 1 — local machine, no files needed
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+Opens at `http://localhost:8501`. In the sidebar choose Built-in demo and
+click Load demo. A full pass through all four tabs takes about two minutes
+with no dataset downloads at all.
+This is the path to use on a presentation machine you do not control.
+Option 2 — Google Colab, public URL
+For a machine with no Python installed. Upload `app.py` and the `fraudgan/`
+folder to `/content`, then:
+```python
+!pip install -q streamlit ctgan imbalanced-learn
+
+!streamlit run /content/app.py --server.port 8501 \
+    --server.enableCORS false --server.enableXsrfProtection false &>/content/st.log &
+!sleep 10
+
+from google.colab.output import eval_js
+print(eval_js("google.colab.kernel.proxyPort(8501)"))
+```
+The printed URL opens the app directly. Colab serves the static assets itself,
+so no tunnel and no password are involved. Do not use localtunnel: it fails
+intermittently on Streamlit's JavaScript chunks.
+Option 3 — your own CSV
+Sidebar → Upload CSV → pick the file → choose the label column → confirm
+the categorical columns → Load. Any dataset with a two-value label works.
+---
+What the application does
+Tab	What happens
+1 · Data	Load, inspect, set the minority budget, split 70/15/15, select features
+2 · Train the GAN	Train Generator and Discriminator, watch the loss curves
+3 · Generated data	Sample synthetic rows, run mode-collapse diagnostics, compare distributions
+4 · Comparison	Run the conditions, see the results table and charts, export CSV
+The minority budget slider
+The most important control on the Data tab. It caps how many real minority rows
+the generator is allowed to learn from.
+This matters because augmentation only helps when real examples are scarce.
+On full PaySim, with 5,749 fraud rows in the training split, a random forest
+reaches PR-AUC 0.998 on the untreated baseline and no augmentation method can
+improve on it. Every condition returns the same number. Lowering the budget to a
+few hundred rows creates the regime where the comparison is informative: at a
+budget of 150, the baseline falls to 0.879 and the conditions separate.
+Sweeping the budget (50, 100, 250, 500, all) produces a curve showing where
+generative augmentation begins to pay off, which is a stronger result than a
+single comparison.
+---
+Results obtained
+PaySim — 6,362,620 rows, 8,213 fraud (0.129%)
+The untreated baseline reaches PR-AUC 0.9981 with recall 0.997 and precision
+1.000. No condition improves on it; all return approximately the same value.
+This is a real finding, not a failure. PaySim's derived balance-error features
+separate the classes almost perfectly for a tree ensemble, so the experiment has
+no headroom. Logistic regression on the same data sits near 0.62, which locates
+the signal in feature interactions that trees capture and a linear boundary
+cannot.
+IEEE-CIS — 590,540 rows, 432 features, 20,663 fraud (3.499%), 2 seeds
+condition	PR-AUC	MCC	recall	precision	seconds
+none	0.6074 ± 0.0091	0.5741 ± 0.0208	0.527	0.656	40
+smote	0.6043 ± 0.0106	0.5792 ± 0.0103	0.525	0.669	68
+tabular_gan	0.6015 ± 0.0123	0.5718 ± 0.0162	0.518	0.662	799
+Neither augmentation method beats the untreated baseline. The baseline's own
+seed-to-seed swing is 0.0128, which is larger than SMOTE's deficit of 0.0031 and
+the GAN's of 0.0059. Both differences sit inside the noise. The ordering
+(none > smote > gan) held across both seeds, and the GAN cost roughly twenty
+times the compute of the baseline for no measurable return.
+Interpretation
+On two datasets with thousands of real minority examples, generative
+augmentation did not improve detection. The negative result is the contribution.
+The minority-budget sweep shows where the picture changes: below roughly two
+hundred real minority rows, augmentation begins to matter, and SMOTE and the GAN
+separate from the baseline.
+---
+Project layout
+```
+app.py                        Streamlit GUI
+COMP5112_GAN.ipynb            Colab notebook (code only)
+COMP5112_Code_Explained.docx  line-by-line explanation of every module
+requirements.txt
+fraudgan/
+    data.py       dataset loaders (PaySim, IEEE-CIS, ULB, synthetic demo)
+    prep.py       split, feature selection, cleaning, encoding
+    gan.py        Generator, Discriminator, WGAN-GP training loop
+    augment.py    conditions: none / SMOTE family / TabularGAN / CTGAN
+    evaluate.py   metrics, threshold selection, classifiers, diagnostics
+    run.py        experiment runner and aggregation
+```
+All prose explanation lives in `COMP5112_Code_Explained.docx`. The source files
+and the notebook carry code only.
+The model
+`gan.py` contains the network definitions.
+Generator — noise vector in, candidate row out. Numeric columns pass through
+`tanh`; each categorical column gets its own `gumbel_softmax` block. That second
+part is what makes GANs work on tables. Selecting a category is a discrete
+choice, gradients cannot flow through a discrete choice, so the generator could
+never learn. Gumbel-softmax supplies a differentiable almost-one-hot vector
+during training and a hard choice at sampling time.
+Discriminator — row in, single unbounded score out. No sigmoid: this is a
+Wasserstein critic rather than a classifier, which makes training far more
+stable on the small minority pools this problem produces. The loss values are
+therefore not interpretable as accuracy; only the shape of the curves matters.
+Gradient penalty — keeps the critic's gradients near unit norm. This is the
+single change that most improves stability and is why the model converges on a
+few hundred rows.
+Generator diagnostics
+Before any synthetic row is used, four checks run:
+duplication rate — share of synthetic rows that are near-copies of a real
+row. High values mean memorisation rather than learning.
+diversity ratio — synthetic spread divided by real spread. Values well
+below 1 indicate mode collapse.
+coverage — share of real rows with a synthetic neighbour.
+marginal similarity — agreement of per-column distributions.
+A generator that fails these is not used, regardless of what the downstream
+classifier scores.
+Evaluation
+Accuracy is deliberately not reported. On PaySim, 99.87% of transactions are
+legitimate, so a model predicting "legitimate" for everything scores 99.87% and
+catches no fraud at all.
+Reported instead: precision, recall and F1 for comparability with published
+work; PR-AUC as the headline discrimination measure; MCC as the headline
+balanced measure; and wall-clock time, so the cost of any gain is visible.
+The decision threshold is chosen on the validation split and then frozen
+before test is touched.
+The one rule
+Only `augment.py` differs between conditions. Data collection, splitting,
+feature selection, preprocessing and evaluation are shared.
+Known limitations
+The random split ignores transaction time; `split_by_time` implements the
+chronological alternative as a robustness check.
+The majority class is capped in the training split for tractability. This is
+stated rather than silent; validation and test are never capped.
+On datasets with categorical columns, BorderlineSMOTE and ADASYN fall back to
+SMOTENC, because imbalanced-learn provides no categorical-aware form of
+either. Both then return results identical to plain SMOTE.
+With a single seed the reported spread is zero, so the `beats_noise` column is
+meaningless. Run at least three seeds before quoting any comparison.
+IEEE-CIS results use two seeds, which is below our own stated threshold. The
+ordering was stable across both, but the comparison should be read as
+indicative rather than settled.
+Reproducing
+```bash
+pip install -r requirements.txt
+python -c "
+from fraudgan import make_demo, Config, run, table
+r = run(make_demo(n=20000, fraud_rate=0.01),
+        Config(seeds=[0,1,2], conditions=['none','smote','tabular_gan'],
+               classifiers=['random_forest']))
+print(table(r))
+"
+```
+Every seed is fixed. Given the same seeds the numbers reproduce exactly.
