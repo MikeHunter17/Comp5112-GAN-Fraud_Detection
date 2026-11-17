@@ -1,10 +1,10 @@
 # Comp5112-GAN-Fraud_Detection
 
-README.md
-
 GAN Augmentation for Class-Imbalanced Fraud Detection
 Adebola Veralyne Fijabi (1298724) · Tolu Omoniyi (1340808)
+
 COMP 5112 Research Methodology — Lakehead University, Fall 2026
+
 A controlled comparison of augmentation strategies for class-imbalanced
 classification. A Generator and Discriminator are implemented from scratch in
 PyTorch (WGAN-GP with gradient penalty and gumbel-softmax for categorical
